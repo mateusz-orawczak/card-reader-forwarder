@@ -94,9 +94,6 @@ class MasterProxy {
                 targetUrl.searchParams.append(key, value);
             });
         }
-
-        console.log('headers', headers);
-        console.log('targetUrl', targetUrl);
         
         // Prepare request options
         const options = {
@@ -104,7 +101,7 @@ class MasterProxy {
             headers: {
                 ...headers
             },
-            timeout: 30000 // 30 second timeout
+            timeout: 100000 
         };
 
         // Remove problematic headers
@@ -115,12 +112,15 @@ class MasterProxy {
         delete options.headers['sec-websocket-extensions'];
         delete options.headers['upgrade'];
         delete options.headers['connection'];
-        
-        console.log('options', options);
 
         return new Promise((resolve, reject) => {
             const isHttps = targetUrl.protocol === 'https:';
             const httpModule = isHttps ? https : http;
+            
+            // Add SSL options for HTTPS requests to bypass certificate verification
+            if (isHttps) {
+                options.rejectUnauthorized = false; // Bypass SSL certificate verification
+            }
             
             const req = httpModule.request(targetUrl, options, (res) => {
                 let responseBody = '';
@@ -184,7 +184,7 @@ class MasterProxy {
         };
 
         this.ws.send(JSON.stringify(responseMessage));
-        console.log(`Response ${requestId} sent: ${response.statusCode}`);
+        console.log(`${response.statusCode} response of ${requestId} sent.`);
     }
 
     sendError(requestId, error) {
