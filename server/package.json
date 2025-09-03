@@ -1,0 +1,24 @@
+{
+  "name": "card-reader-forwarder-server",
+  "version": "1.0.0",
+  "description": "WebSocket relay server for card reader forwarder",
+  "main": "websocket-server.js",
+  "scripts": {
+    "start": "node websocket-server.js",
+    "dev": "nodemon websocket-server.js"
+  },
+  "dependencies": {
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "websocket",
+    "relay",
+    "proxy",
+    "card-reader"
+  ],
+  "author": "",
+  "license": "MIT"
+}

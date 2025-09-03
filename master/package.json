@@ -1,0 +1,23 @@
+{
+  "name": "card-reader-forwarder-master",
+  "version": "1.0.0",
+  "description": "Master proxy for card reader forwarder",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "dependencies": {
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "websocket",
+    "proxy",
+    "card-reader"
+  ],
+  "author": "",
+  "license": "MIT"
+}
