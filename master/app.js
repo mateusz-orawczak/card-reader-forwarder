@@ -202,10 +202,8 @@ class MasterProxy {
 }
 
 // Configuration
-// const SERVER_URL = process.env.RELAY_SERVER_URL || 'ws://localhost:8080';
 const SERVER_URL = process.env.RELAY_SERVER_URL || 'ws://card-reader-env.eba-azfgrdve.eu-central-1.elasticbeanstalk.com/';
-// const TARGET_API_URL = process.env.TARGET_API_URL || 'http://localhost.icanopee.net:9982';
-const TARGET_API_URL = process.env.TARGET_API_URL || 'http://localhost:8000/api/codes/scan';
+const TARGET_API_URL = process.env.TARGET_API_URL || 'https://localhost.icanopee.net:9982';
 
 // Start the master proxy
 const masterProxy = new MasterProxy(SERVER_URL, TARGET_API_URL);
