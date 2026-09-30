@@ -1,3 +1,6 @@
+# Local TLS key for the Efficience compatibility listener
+client/certs/*.pem
+
 # Dependencies
 node_modules/
 */node_modules/
@@ -112,3 +115,6 @@ temp/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Beanstalk upload bundle
+relay-server-deploy.zip

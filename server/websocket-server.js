@@ -8,6 +8,7 @@ class WebSocketRelayServer {
         this.master = null; // Store master connection
         this.requestId = 0;
         this.pendingRequests = new Map(); // Store pending requests waiting for responses
+        this.tunnels = new Map(); // WebSocket tunnel id -> client connection that opened it
         
         this.setupServer();
     }
@@ -18,6 +19,10 @@ class WebSocketRelayServer {
 
         this.wss.on('connection', (ws, req) => {
             console.log('New connection established');
+            ws.isAlive = true;
+            ws.on('pong', () => {
+                ws.isAlive = true;
+            });
             
             ws.on('message', (data) => {
                 try {
@@ -29,7 +34,9 @@ class WebSocketRelayServer {
                 }
             });
 
-            ws.on('close', () => {
+            ws.on('close', (code, reason) => {
+                ws.closeCode = code;
+                ws.closeReason = reason && reason.length ? reason.toString() : 'none';
                 this.handleDisconnection(ws);
             });
 
@@ -38,6 +45,21 @@ class WebSocketRelayServer {
                 this.handleDisconnection(ws);
             });
         });
+
+        // Elastic Beanstalk closes WebSockets that are idle for ~60s.
+        // Ping inside that window so nginx and the load balancer see traffic.
+        this.heartbeat = setInterval(() => {
+            this.wss.clients.forEach((ws) => {
+                if (ws.isAlive === false) {
+                    console.log('Terminating connection that missed a heartbeat');
+                    ws.terminate();
+                    return;
+                }
+
+                ws.isAlive = false;
+                ws.ping();
+            });
+        }, 25000);
 
         this.server.listen(this.port, () => {
             console.log(`WebSocket relay server running on port ${this.port}`);
@@ -54,6 +76,13 @@ class WebSocketRelayServer {
                 break;
             case 'response':
                 this.handleResponse(ws, message);
+                break;
+            case 'ws_open':
+                this.handleTunnelOpen(ws, message);
+                break;
+            case 'ws_message':
+            case 'ws_close':
+                this.relayTunnelFrame(ws, message);
                 break;
             default:
                 console.log('Unknown message type:', message.type);
@@ -75,7 +104,8 @@ class WebSocketRelayServer {
     }
 
     handleRequest(ws, message) {
-        if (!this.master) {
+        if (!this.master || this.master.readyState !== WebSocket.OPEN) {
+            console.error(`Request ${message.requestId} dropped: master not connected (${message.method} ${message.path})`);
             ws.send(JSON.stringify({ 
                 type: 'error', 
                 requestId: message.requestId,
@@ -90,7 +120,8 @@ class WebSocketRelayServer {
         // Store the request for response matching
         this.pendingRequests.set(requestId, {
             clientWs: ws,
-            originalRequest: message
+            originalRequest: message,
+            forwardedAt: Date.now()
         });
 
         // Forward request to master
@@ -105,7 +136,7 @@ class WebSocketRelayServer {
         };
 
         this.master.send(JSON.stringify(forwardMessage));
-        console.log(`Request ${requestId} forwarded to master`);
+        console.log(`Request ${requestId} forwarded to master: ${message.method} ${message.path}`);
     }
 
     handleResponse(ws, message) {
@@ -132,17 +163,68 @@ class WebSocketRelayServer {
         pendingRequest.clientWs.send(JSON.stringify(responseMessage));
         
         // Clean up
+        const elapsed = Date.now() - pendingRequest.forwardedAt;
         this.pendingRequests.delete(message.requestId);
-        console.log(`Response ${message.requestId} sent to client`);
+        console.log(`Response ${message.requestId} HTTP ${message.statusCode} sent to client in ${elapsed}ms`);
+    }
+
+    handleTunnelOpen(ws, message) {
+        if (!this.master || this.master.readyState !== WebSocket.OPEN) {
+            console.error(`WebSocket tunnel ${message.connId} refused: master not connected (${message.path})`);
+            ws.send(JSON.stringify({
+                type: 'ws_close',
+                connId: message.connId,
+                code: 1011,
+                reason: 'Master computer not available'
+            }));
+            return;
+        }
+
+        this.tunnels.set(message.connId, ws);
+        this.master.send(JSON.stringify(message));
+        console.log(`WebSocket tunnel ${message.connId} forwarded to master: ${message.path}`);
+    }
+
+    relayTunnelFrame(ws, message) {
+        const clientWs = this.tunnels.get(message.connId);
+        if (!clientWs) {
+            return;
+        }
+
+        const target = ws === this.master ? clientWs : this.master;
+        if (target && target.readyState === WebSocket.OPEN) {
+            target.send(JSON.stringify(message));
+        }
+
+        if (message.type === 'ws_close') {
+            this.tunnels.delete(message.connId);
+            console.log(`WebSocket tunnel ${message.connId} closed by ${ws === this.master ? 'master' : 'client'} (code ${message.code})`);
+        }
     }
 
     handleDisconnection(ws) {
-        if (ws === this.master) {
+        const closeDetail = `code ${ws.closeCode}, reason: ${ws.closeReason || 'none'}`;
+        const wasMaster = ws === this.master;
+        if (wasMaster) {
             this.master = null;
-            console.log('Master computer disconnected');
+            console.log(`Master computer disconnected (${closeDetail})`);
         } else if (ws.clientId) {
             this.clients.delete(ws.clientId);
-            console.log(`Client ${ws.clientId} disconnected`);
+            console.log(`Client ${ws.clientId} disconnected (${closeDetail})`);
+        }
+
+        for (const [connId, clientWs] of this.tunnels.entries()) {
+            if (wasMaster) {
+                this.tunnels.delete(connId);
+                if (clientWs.readyState === WebSocket.OPEN) {
+                    clientWs.send(JSON.stringify({ type: 'ws_close', connId, code: 1011, reason: 'Master computer disconnected' }));
+                }
+            } else if (clientWs === ws) {
+                this.tunnels.delete(connId);
+                if (this.master && this.master.readyState === WebSocket.OPEN) {
+                    this.master.send(JSON.stringify({ type: 'ws_close', connId, code: 1001, reason: 'Client disconnected' }));
+                }
+            }
         }
 
         // Clean up any pending requests from this connection
@@ -161,6 +243,7 @@ const relayServer = new WebSocketRelayServer(process.env.PORT || 8080);
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('Shutting down WebSocket relay server...');
+    clearInterval(relayServer.heartbeat);
     relayServer.server.close(() => {
         process.exit(0);
     });
